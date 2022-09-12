@@ -3,7 +3,7 @@ from datetime import datetime
 from django.db import models, transaction
 from django.conf import settings
 
-from .constants import OrderState
+import constants
 
 
 class Event(models.Model):
@@ -52,13 +52,13 @@ class Order(models.Model):
     )
     quantity = models.PositiveIntegerField()
     state = models.CharField(
-        choices=OrderState,
-        default=OrderState.CREATED,
+        choices=constants.ORDER_STATES,
+        default=constants.CREATED_STATE,
     )
     state_change_at = models.DateTimeField(null=True)
 
     def book_tickets(self):
-        if self.fulfilled:
+        if self.state == constants.FULFILLED_STATE:
             raise Exception("Order already fulfilled")
         qs = self.ticket_type.available_tickets().select_for_update(skip_locked=True)[
             : self.quantity
@@ -73,5 +73,6 @@ class Order(models.Model):
         except Exception:
             return
 
-        self.fulfilled = True
-        self.save(update_fields=["fulfilled", "fulfilled_at"])
+        self.state = constants.FULFILLED_STATE
+        self.state_change_at = datetime.utcnow()
+        self.save(update_fields=["state", "state_change_at"])
