@@ -1,10 +1,16 @@
+from datetime import datetime
+import pytz
 from django.db import models, transaction
+from django.db.models import Q
 from django.conf import settings
+
+from . import constants
 
 
 class Event(models.Model):
     name = models.CharField(max_length=255)
     description = models.TextField()
+    event_date = models.DateField(null=True)
 
 
 class TicketType(models.Model):
@@ -17,7 +23,9 @@ class TicketType(models.Model):
     quantity.help_text = "The number of actual tickets available upon creation"
 
     def available_tickets(self):
-        return self.tickets.filter(order__isnull=True)
+        return self.tickets.filter(
+            Q(order__isnull=True) | Q(order__state=constants.CANCELLED_STATE)
+        )
 
     def save(self, *args, **kwargs):
         new = not self.pk
@@ -47,10 +55,15 @@ class Order(models.Model):
         TicketType, related_name="orders", on_delete=models.CASCADE
     )
     quantity = models.PositiveIntegerField()
-    fulfilled = models.BooleanField(default=False)
+    state = models.CharField(
+        max_length=20,
+        choices=constants.ORDER_STATES,
+        default=constants.CREATED_STATE,
+    )
+    state_change_at = models.DateTimeField(null=True)
 
     def book_tickets(self):
-        if self.fulfilled:
+        if self.state == constants.FULFILLED_STATE:
             raise Exception("Order already fulfilled")
         qs = self.ticket_type.available_tickets().select_for_update(skip_locked=True)[
             : self.quantity
@@ -65,5 +78,27 @@ class Order(models.Model):
         except Exception:
             return
 
-        self.fulfilled = True
-        self.save(update_fields=["fulfilled"])
+        self.state = constants.FULFILLED_STATE
+        self.state_change_at = datetime.utcnow().replace(tzinfo=pytz.UTC)
+        self.save(update_fields=["state", "state_change_at"])
+
+    def cancel(self):
+        time_difference = (
+            datetime.utcnow().replace(tzinfo=pytz.UTC) - self.state_change_at
+        )
+
+        if time_difference.seconds >= 30 * 60:
+            booked_tickets_qs = self.ticket_type.available_tickets().select_for_update(
+                skip_locked=True
+            )[: self.quantity]
+
+            with transaction.atomic():
+                self.state = constants.CANCELLED_STATE
+                self.state_change_at = datetime.utcnow().replace(tzinfo=pytz.UTC)
+                self.save(update_fields=["state", "state_change_at"])
+
+    @property
+    def is_cancelled(self) -> bool:
+        if self.state == constants.CANCELLED_STATE:
+            return True
+        return False

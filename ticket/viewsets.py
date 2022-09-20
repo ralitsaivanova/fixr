@@ -3,10 +3,12 @@ from rest_framework import mixins, viewsets, exceptions
 from .models import Event, TicketType, Order
 from .serializers import EventSerializer, TicketTypeSerializer, OrderSerializer
 
+from . import constants
+
 
 class EventViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = EventSerializer
-    queryset = Event.objects.prefetch_related('ticket_types')
+    queryset = Event.objects.prefetch_related("ticket_types")
 
 
 class OrderViewSet(mixins.CreateModelMixin, viewsets.ReadOnlyModelViewSet):
@@ -20,6 +22,6 @@ class OrderViewSet(mixins.CreateModelMixin, viewsets.ReadOnlyModelViewSet):
     def perform_create(self, serializer):
         order = serializer.save(user=self.request.user)
         order.book_tickets()
-        if not order.fulfilled:
+        if not order.state == constants.FULFILLED_STATE:
             order.delete()
             raise exceptions.ValidationError("Couldn't book tickets")
